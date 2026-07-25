@@ -102,12 +102,22 @@ def resolved_ips_safe(host: str) -> bool:
     return True
 
 def validate_url(url: str):
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https"):
+    try:
+        parts = urlsplit(url)
+    except Exception as e:
+        return False, f"unparseable url: {e}"
+
+    if parts.scheme.lower() not in ("http", "https"):
         return False, "scheme not allowed"
+
     if parts.username or parts.password:
         return False, "userinfo in URL not allowed"
-    host = parts.hostname
+
+    try:
+        host = parts.hostname
+    except Exception as e:
+        return False, f"unparseable host: {e}"
+
     if not hostname_allowed(host):
         return False, f"host '{host}' not in allowlist"
     if not resolved_ips_safe(host):
@@ -120,7 +130,10 @@ def safe_fetch(url: str):
         ok, reason = validate_url(current)
         if not ok:
             return None, f"blocked: {reason}"
-        resp = requests.get(current, timeout=FETCH_TIMEOUT, allow_redirects=False)
+        try:
+            resp = requests.get(current, timeout=FETCH_TIMEOUT, allow_redirects=False)
+        except Exception as e:
+            return None, f"fetch error: {e}"
         if resp.status_code in (301, 302, 303, 307, 308) and "Location" in resp.headers:
             current = resp.headers["Location"]
             continue
@@ -134,30 +147,37 @@ class ToolCall(BaseModel):
     tool: str
     arguments: Dict[str, Any]
 
+@app.get("/")
+async def health():
+    return {"status": "ok"}
+
 @app.post("/")
 async def guardrail(call: ToolCall):
-    if call.tool == "read_file":
-        path = call.arguments.get("path")
-        real, err = resolve_safe_path(path)
-        if err:
-            return {"action": "block", "reason": err}
-        try:
-            with open(real, "r", errors="replace") as f:
-                content = f.read()
-            return {"action": "allow", "reason": "path within sandbox", "result": content}
-        except Exception as e:
-            return {"action": "block", "reason": f"read error: {e}"}
+    try:
+        if call.tool == "read_file":
+            path = call.arguments.get("path")
+            real, err = resolve_safe_path(path)
+            if err:
+                return {"action": "block", "reason": err}
+            try:
+                with open(real, "r", errors="replace") as f:
+                    content = f.read()
+                return {"action": "allow", "reason": "path within sandbox", "result": content}
+            except Exception as e:
+                return {"action": "block", "reason": f"read error: {e}"}
 
-    elif call.tool == "fetch_url":
-        url = call.arguments.get("url")
-        if not url:
-            return {"action": "block", "reason": "no url provided"}
-        ok, reason = validate_url(url)
-        if not ok:
-            return {"action": "block", "reason": reason}
-        text, err = safe_fetch(url)
-        if err:
-            return {"action": "block", "reason": err}
-        return {"action": "allow", "reason": "host allowlisted", "result": text}
+        elif call.tool == "fetch_url":
+            url = call.arguments.get("url")
+            if not url:
+                return {"action": "block", "reason": "no url provided"}
+            ok, reason = validate_url(url)
+            if not ok:
+                return {"action": "block", "reason": reason}
+            text, err = safe_fetch(url)
+            if err:
+                return {"action": "block", "reason": err}
+            return {"action": "allow", "reason": "host allowlisted", "result": text}
 
-    return {"action": "block", "reason": "unknown tool"}
+        return {"action": "block", "reason": "unknown tool"}
+    except Exception as e:
+        return {"action": "block", "reason": f"internal error: {e}"}
