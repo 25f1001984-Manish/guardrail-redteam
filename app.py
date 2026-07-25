@@ -16,7 +16,6 @@ ALLOWED_HOSTS = {"example.com", "www.iana.org"}
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 5
 
-# ---------- Bootstrap the required files (idempotent, runs at startup) ----------
 def bootstrap_files():
     files = {
         f"{OUTSIDE_DIR}/canary.txt":
@@ -44,22 +43,16 @@ except Exception as e:
 
 SANDBOX_ROOT_REAL = os.path.realpath(SANDBOX_ROOT)
 
-# ---------- Path sandbox ----------
 def resolve_safe_path(user_path: str):
     if user_path is None:
         return None, "no path provided"
     if "\x00" in user_path:
         return None, "null byte in path"
 
-    # Never let an absolute path escape join(); always treat input as relative
-    # to the sandbox root, regardless of leading slashes.
     rel = user_path.lstrip("/")
     candidate = os.path.normpath(os.path.join(SANDBOX_ROOT_REAL, rel))
-
-    # Resolve symlinks + ".." physically, not just lexically
     real = os.path.realpath(candidate)
 
-    # Boundary check: must be the root itself or a real child of it (separator-safe)
     if real != SANDBOX_ROOT_REAL and not real.startswith(SANDBOX_ROOT_REAL + os.sep):
         return None, "path escapes sandbox"
 
@@ -71,7 +64,6 @@ def resolve_safe_path(user_path: str):
 class ReadFileArgs(BaseModel):
     path: str
 
-# ---------- URL / SSRF guard ----------
 def is_ip_literal(host: str) -> bool:
     try:
         ipaddress.ip_address(host)
@@ -95,7 +87,7 @@ def hostname_allowed(host: str) -> bool:
         return False
     host = host.lower().rstrip(".")
     if is_ip_literal(host):
-        return False  # only named hosts are allowlisted, never raw IPs
+        return False
     return host in ALLOWED_HOSTS
 
 def resolved_ips_safe(host: str) -> bool:
@@ -115,7 +107,7 @@ def validate_url(url: str):
         return False, "scheme not allowed"
     if parts.username or parts.password:
         return False, "userinfo in URL not allowed"
-    host = parts.hostname  # urlsplit strips userinfo correctly
+    host = parts.hostname
     if not hostname_allowed(host):
         return False, f"host '{host}' not in allowlist"
     if not resolved_ips_safe(host):
@@ -152,4 +144,20 @@ async def guardrail(call: ToolCall):
         try:
             with open(real, "r", errors="replace") as f:
                 content = f.read()
-            return {"action": "allow", "reason": "path within sandbox", "result":
+            return {"action": "allow", "reason": "path within sandbox", "result": content}
+        except Exception as e:
+            return {"action": "block", "reason": f"read error: {e}"}
+
+    elif call.tool == "fetch_url":
+        url = call.arguments.get("url")
+        if not url:
+            return {"action": "block", "reason": "no url provided"}
+        ok, reason = validate_url(url)
+        if not ok:
+            return {"action": "block", "reason": reason}
+        text, err = safe_fetch(url)
+        if err:
+            return {"action": "block", "reason": err}
+        return {"action": "allow", "reason": "host allowlisted", "result": text}
+
+    return {"action": "block", "reason": "unknown tool"}
