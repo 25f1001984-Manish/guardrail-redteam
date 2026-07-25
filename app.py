@@ -29,12 +29,18 @@ def bootstrap_files():
             "SAFE_ENCODED_2605d2b78d09418701cc868d",
     }
     for path, content in files.items():
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        if not os.path.exists(path):
-            with open(path, "w") as f:
-                f.write(content)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if not os.path.exists(path):
+                with open(path, "w") as f:
+                    f.write(content)
+        except Exception as e:
+            print(f"[bootstrap] WARNING: could not create {path}: {e}")
 
-bootstrap_files()
+try:
+    bootstrap_files()
+except Exception as e:
+    print(f"[bootstrap] FATAL during bootstrap, continuing anyway: {e}")
 
 SANDBOX_ROOT_REAL = os.path.realpath(SANDBOX_ROOT)
 
@@ -146,20 +152,4 @@ async def guardrail(call: ToolCall):
         try:
             with open(real, "r", errors="replace") as f:
                 content = f.read()
-            return {"action": "allow", "reason": "path within sandbox", "result": content}
-        except Exception as e:
-            return {"action": "block", "reason": f"read error: {e}"}
-
-    elif call.tool == "fetch_url":
-        url = call.arguments.get("url")
-        if not url:
-            return {"action": "block", "reason": "no url provided"}
-        ok, reason = validate_url(url)
-        if not ok:
-            return {"action": "block", "reason": reason}
-        text, err = safe_fetch(url)
-        if err:
-            return {"action": "block", "reason": err}
-        return {"action": "allow", "reason": "host allowlisted", "result": text}
-
-    return {"action": "block", "reason": "unknown tool"}
+            return {"action": "allow", "reason": "path within sandbox", "result":
