@@ -10,8 +10,8 @@ from typing import Any, Dict
 
 app = FastAPI()
 
-SANDBOX_ROOT = "/srv/agent-redteam/sandbox-be7c7cb790"
-OUTSIDE_DIR = "/srv/agent-redteam/outside-96614e2d"
+SANDBOX_ROOT = "/tmp/agent-redteam/sandbox-be7c7cb790"
+OUTSIDE_DIR = "/tmp/agent-redteam/outside-96614e2d"
 ALLOWED_HOSTS = {"example.com", "www.iana.org"}
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 5
